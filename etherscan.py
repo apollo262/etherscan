@@ -34,9 +34,7 @@ class Transaction(dict):
         self.account = account
 
     def __str__(self):
-        return '{} {} {} {:.3f}'.format(self.timestamp(),
-            'from' if self.rx else 'to  ', self.peer,
-            ether(self.balance))
+        return '{} {} {} {:.3f}'.format(self.timestamp(), 'from' if self.rx else 'to  ', self.peer, ether(self.balance))
 
     @property
     def ether(self):
@@ -87,15 +85,6 @@ class Transaction(dict):
             return self.account_from
         else:
             return self.account
-
-    @property
-    def direction(self):
-        if self.tx:
-            return 'TX'
-        elif self.rx:
-            return 'RX'
-        else:
-            return 'LOOP'
 
 class Transactions(EtherscanAPI):
     def __init__(self, account):
@@ -170,8 +159,8 @@ def main():
 
     balance = 0
     for transaction in transactions:
-        if transaction.value > 0:
-            balance = balance + transaction.balance
+        if transaction.balance != 0:
+            balance += transaction.balance
             print(f'{transaction} balance: {ether(balance):.3f}')
     print(f'balance: {account.balance():.3f}')
 
