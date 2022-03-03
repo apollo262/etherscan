@@ -33,6 +33,10 @@ class Transaction(dict):
         super().__init__(transaction)
         self.account = account
 
+        for key in ['gas', 'gasPrice', 'gasUsed']:
+            value = 0 if not self.get(key) else int(self[key])
+            setattr(self, key, value)
+
     def __str__(self):
         return '{} {} {} {:.3f}'.format(self.timestamp(), 'from' if self.rx else 'to  ', self.peer, ether(self.balance))
 
@@ -69,9 +73,13 @@ class Transaction(dict):
         return (self.account_from != self.account_to) and (self.account_to == self.account)
 
     @property
+    def gasCost(self):
+        return self.gasPrice*self.gasUsed
+
+    @property
     def balance(self):
         if self.tx:
-            return self.wei*-1
+            return (self.wei*-1)+(self.gasCost*-1)
         elif self.rx:
             return self.wei
         else:
@@ -158,11 +166,15 @@ def main():
     transactions = sorted(transactions, key=lambda x: x['timeStamp'])
 
     balance = 0
+    max = 0
     for transaction in transactions:
         if transaction.balance != 0:
             balance += transaction.balance
             print(f'{transaction} balance: {ether(balance):.3f}')
+            if max < balance:
+                max = balance
     print(f'balance: {account.balance():.3f}')
+    print(f'max: {ether(max):.3f}')
 
 if __name__ == '__main__':
     try:
