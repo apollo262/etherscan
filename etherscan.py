@@ -135,6 +135,7 @@ class Account(EtherscanAPI):
     def __str__(self):
         return self.address
 
+    @property
     def balance(self):
         response = self.request(params={
             'module': 'account',
@@ -143,7 +144,7 @@ class Account(EtherscanAPI):
             'tag': 'latest',
         })
         if response.ok:
-            return ether(response['result'])
+            return int(response['result'])
 
     def __eq__(self, other):
         return self.address.lower() == other.address.lower()
@@ -166,15 +167,12 @@ def main():
     transactions = sorted(transactions, key=lambda x: x['timeStamp'])
 
     balance = 0
-    max = 0
     for transaction in transactions:
         if transaction.balance != 0:
             balance += transaction.balance
             print(f'{transaction} balance: {ether(balance):.3f}')
-            if max < balance:
-                max = balance
-    print(f'balance: {account.balance():.3f}')
-    print(f'max: {ether(max):.3f}')
+    print(f'balance: {ether(account.balance):.3f}')
+    assert(account.balance == balance)
 
 if __name__ == '__main__':
     try:
