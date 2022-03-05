@@ -1,5 +1,6 @@
 certifi==2021.10.8
 charset-normalizer==2.0.12
+graphviz==0.19.1
 idna==3.3
 pkg_resources==0.0.0
 python-dotenv==0.19.2

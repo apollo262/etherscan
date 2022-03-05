@@ -1,6 +1,7 @@
 import os
 import requests
 import json
+import graphviz
 from ether import ether
 from dotenv import load_dotenv
 from datetime import datetime
@@ -13,7 +14,7 @@ class EtherscanAPI:
 
     def request(self, params):
         params.update({'apikey': self.apikey})
-        response =  Response(requests.get(self.endpoint, params=params))
+        response = Response(requests.get(self.endpoint, params=params))
         #print(json.dumps({'request': [self.endpoint, params], 'response': response}, indent=4))
         return response
 
@@ -79,7 +80,7 @@ class Transaction(dict):
     @property
     def balance(self):
         if self.tx:
-            return (self.wei*-1)+(self.gasCost*-1)
+            return (self.wei*-1)-self.gasCost
         elif self.rx:
             return self.wei
         else:
@@ -131,20 +132,24 @@ class Account(EtherscanAPI):
         super().__init__()
         self.address = address
         self.transactions = Transactions(self)
+        self.payments = Payments(self)
+        self._balance = None
 
     def __str__(self):
         return self.address
 
     @property
     def balance(self):
-        response = self.request(params={
-            'module': 'account',
-            'action': 'balance',
-            'address': self.address,
-            'tag': 'latest',
-        })
-        if response.ok:
-            return int(response['result'])
+        if self._balance is None:
+            response = self.request(params={
+                'module': 'account',
+                'action': 'balance',
+                'address': self.address,
+                'tag': 'latest',
+            })
+            if response.ok:
+                self._balance = int(response['result'])
+        return self._balance
 
     def __eq__(self, other):
         return self.address.lower() == other.address.lower()
@@ -152,27 +157,103 @@ class Account(EtherscanAPI):
     def __ne__(self, other):
         return self.address.lower() != other.address.lower()
 
+class AccountFactory:
+    def __init__(self):
+        self.accounts = {}
+
+    def create(self, address):
+        return self.accounts.setdefault(address, Account(address))
+account_factory = AccountFactory()
+
+class Payments:
+    def __init__(self, account):
+        self.account = account
+        self.transactions = None
+        self.peers = {}
+        self.total = 0
+
+    def initialize(self):
+        self.transactions = get_transactions(self.account)
+        for transaction in self.transactions:
+            peer = self.peers.setdefault(transaction.peer.address, {
+                'wei': 0, 'address': transaction.peer.address,
+            })
+            if transaction.tx:
+                self.peers[transaction.peer.address]['wei'] += transaction.wei
+            if transaction.rx:
+                self.peers[transaction.peer.address]['wei'] -= transaction.wei
+
+        for peer in self.peers.values():
+            if peer['wei'] > 0:
+                self.total += peer['wei']
+
+        for peer in self.peers.values():
+            if peer['wei'] > 0:
+                peer['ratio'] = peer['wei']/self.total
+            else:
+                peer['ratio'] = 0
+
+    def update_graph(self, graph, ratio=0.01):
+        if self.transactions is None:
+            self.initialize()
+
+        for peer in self.peers.values():
+            if peer['ratio'] > ratio:
+                balance = self.account.balance
+                print(f'{self.account.address}({ether(balance):,.0f})->{peer["address"]}({ether(peer["wei"]):,.0f}) {peer["ratio"]*100:.1f}%')
+                graph.edge(
+                    f'{self.account.address}\n({ether(balance):,.0f}ETH)',
+                    f'{peer["address"]}\n({ether(account_factory.create(peer["address"]).balance):,.0f}ETH)',
+                    label=f'{ether(peer["wei"]):,.0f}ETH ({peer["ratio"]*100:.1f}%)'
+                )
+
+    def get_peers(self, ratio=0.01):
+        for addr in self.peers.keys():
+            if self.peers[addr]['ratio'] > ratio:
+                yield account_factory.create(addr)
+
+def get_peers(account, graph, depth, ratio):
+    if depth <= 0:
+        return
+
+    for peer in account.payments.get_peers(ratio):
+        if peer.payments.transactions is None:
+            peer.payments.update_graph(graph, ratio)
+            get_peers(peer, graph, depth-1, ratio)
+
+def get_transactions(account):
+    transactions  = list(account.transactions.normal())
+    transactions += list(account.transactions.internal())
+    return sorted(transactions, key=lambda x: x['timeStamp'])
+
 def parse_args():
     parser = ArgumentParser()
-    parser.add_argument('--addr', required=True)
+    parser.add_argument('--addr', '-a', required=True)
+    parser.add_argument('--balance', '-b', action='store_true')
+    parser.add_argument('--ratio', '-r', type=float, default=0.05)
+    parser.add_argument('--depth', '-d', type=int, default=3)
+    parser.add_argument('--format', '-f', default='pdf')
     return parser.parse_args()
 
 def main():
     load_dotenv()
     args = parse_args()
 
-    account = Account(args.addr)
-    transactions  = list(account.transactions.normal())
-    transactions += list(account.transactions.internal())
-    transactions = sorted(transactions, key=lambda x: x['timeStamp'])
-
-    balance = 0
-    for transaction in transactions:
-        if transaction.balance != 0:
-            balance += transaction.balance
-            print(f'{transaction} balance: {ether(balance):.3f}')
-    print(f'balance: {ether(account.balance):.3f}')
-    assert(account.balance == balance)
+    account = account_factory.create(args.addr)
+    if args.balance:
+        balance = 0
+        for transaction in get_transactions(account):
+            if transaction.balance != 0:
+                balance += transaction.balance
+                print(f'{transaction} balance: {ether(balance):.3f}')
+        print(f'balance: {ether(account.balance):.3f}')
+        assert(account.balance == balance)
+    else:
+        graph = graphviz.Digraph('unix', format=args.format, node_attr={'color': 'lightblue2', 'style': 'filled', 'shape': 'box'})
+        graph.attr(size='6,6', rankdir='LR')
+        account.payments.update_graph(graph, args.ratio)
+        get_peers(account, graph, depth=args.depth, ratio=args.ratio)
+        graph.render(f'{args.addr}_d{args.depth}_r{args.ratio}')
 
 if __name__ == '__main__':
     try:
